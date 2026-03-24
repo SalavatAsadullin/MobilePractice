@@ -1,14 +1,36 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
+import {
+  View, Text, StyleSheet, ScrollView, SafeAreaView, Pressable, Linking, Alert,
+} from 'react-native';
 import { COLORS, FONTS, SPACING } from '../constants/theme';
+import { useAppContext } from '../context/AppContext';
+
+const OPERATOR_PHONE_DISPLAY = '+7 (800) 123-45-67';
+const OPERATOR_PHONE_TEL = '+78001234567';
 
 export default function HomeScreen() {
+  const { user } = useAppContext();
+  const greeting = user?.name ? `Добро пожаловать, ${user.name}! 👋` : 'Добро пожаловать! 👋';
+
+  const handleCallOperator = async () => {
+    const url = `tel:${OPERATOR_PHONE_TEL}`;
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Звонок', 'На этом устройстве нельзя открыть набор номера');
+      }
+    } catch (_) {
+      Alert.alert('Ошибка', 'Не удалось начать звонок');
+    }
+  };
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
 
         <View style={styles.header}>
-          <Text style={styles.greeting}>Добро пожаловать 👋</Text>
+          <Text style={styles.greeting}>{greeting}</Text>
           <Text style={styles.subtitle}>Акватория — чистая вода для вас</Text>
         </View>
 
@@ -46,7 +68,15 @@ export default function HomeScreen() {
 
         <View style={[styles.card, styles.contactCard]}>
           <Text style={styles.cardTitle}>📞 Контакты</Text>
-          <Text style={styles.contactText}>+7 (800) 123-45-67</Text>
+          <Pressable
+            onPress={handleCallOperator}
+            style={({ pressed }) => [styles.phonePressable, pressed && styles.phonePressablePressed]}
+            accessibilityRole="link"
+            accessibilityLabel={`Позвонить по номеру ${OPERATOR_PHONE_DISPLAY}`}
+          >
+            <Text style={styles.contactText}>{OPERATOR_PHONE_DISPLAY}</Text>
+            <Text style={styles.phoneHint}>Нажмите, чтобы позвонить</Text>
+          </Pressable>
           <Text style={styles.contactSubtext}>Звонок бесплатный</Text>
         </View>
         
@@ -114,6 +144,9 @@ const styles = StyleSheet.create({
   scheduleTime: { fontSize: FONTS.body - 1, color: COLORS.primary, fontWeight: '600' },
   benefitItem: { fontSize: FONTS.body - 1, color: COLORS.text, paddingVertical: 3 },
   contactCard: { alignItems: 'center', marginBottom: SPACING.xl },
+  phonePressable: { alignItems: 'center', paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md },
+  phonePressablePressed: { opacity: 0.7 },
   contactText: { fontSize: FONTS.heading - 8, fontWeight: 'bold', color: COLORS.primary },
+  phoneHint: { fontSize: FONTS.caption, color: COLORS.secondary, marginTop: 4 },
   contactSubtext: { fontSize: FONTS.caption, color: COLORS.textLight, marginTop: 2 },
 });

@@ -5,11 +5,25 @@ import {
 } from 'react-native';
 import { COLORS, FONTS, SPACING } from '../constants/theme';
 import { supabase } from '../services/supabase';
+import { useAppContext } from '../context/AppContext';
 
 export default function CatalogScreen({ navigation }) {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [addedIds, setAddedIds] = useState([]); // анимация подтверждения
+
+  // Получаем метод добавления в корзину из глобального состояния
+  const { addToCart } = useAppContext();
+
+  const handleAddToCart = (product) => {
+    addToCart(product);
+    // Кратко показываем "Добавлено!" на кнопке
+    setAddedIds((prev) => [...prev, product.id]);
+    setTimeout(() => {
+      setAddedIds((prev) => prev.filter((id) => id !== product.id));
+    }, 1200);
+  };
 
   useEffect(() => {
     fetchProducts();
@@ -87,10 +101,12 @@ export default function CatalogScreen({ navigation }) {
                 <Text style={styles.detailButtonText}>Подробнее</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.button}
-                onPress={() => navigation.navigate('Order', { product: item })}
+                style={[styles.button, addedIds.includes(item.id) && styles.buttonAdded]}
+                onPress={() => handleAddToCart(item)}
               >
-                <Text style={styles.buttonText}>Заказать</Text>
+                <Text style={styles.buttonText}>
+                  {addedIds.includes(item.id) ? '✓ Добавлено' : 'В корзину'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -144,5 +160,6 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: COLORS.primary,
     paddingVertical: SPACING.sm, borderRadius: 10, alignItems: 'center',
   },
+  buttonAdded: { backgroundColor: '#4CAF50' },
   buttonText: { color: COLORS.white, fontWeight: '700', fontSize: FONTS.body - 1 },
 });

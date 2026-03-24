@@ -15,11 +15,20 @@ import { COLORS } from './src/constants/theme';
 import LoginScreen from './src/screens/LoginScreen';
 import WaterDetailScreen from './src/screens/WaterDetailScreen';
 import { supabase } from './src/services/supabase';
+import { AppProvider, useAppContext } from './src/context/AppContext';
+import CartScreen from './src/screens/CartScreen';
+import AdminOrdersScreen from './src/screens/AdminOrdersScreen';
+import AdminOrderDetailsScreen from './src/screens/AdminOrderDetailsScreen';
+import AdminCreateOrderScreen from './src/screens/AdminCreateOrderScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 function MainTabs() {
+  // Читаем количество товаров в корзине из глобального состояния
+  // для отображения бейджа на иконке
+  const { cartCount, user } = useAppContext();
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -36,14 +45,35 @@ function MainTabs() {
       />
       <Tab.Screen
         name="Catalog"
-        component={CatalogScreen}
-        options={{ tabBarLabel: 'Каталог', tabBarIcon: ({ color }) => <Text style={{ fontSize: 22, color }}>💧</Text> }}
+        component={user?.isAdmin ? AdminCreateOrderScreen : CatalogScreen}
+        options={{
+          tabBarLabel: user?.isAdmin ? 'Оформление' : 'Каталог',
+          tabBarIcon: ({ color }) => <Text style={{ fontSize: 22, color }}>{user?.isAdmin ? '🧾' : '💧'}</Text>,
+        }}
       />
+      {!user?.isAdmin ? (
+        <Tab.Screen
+          name="Cart"
+          component={CartScreen}
+          options={{
+            tabBarLabel: 'Корзина',
+            tabBarIcon: ({ color }) => <Text style={{ fontSize: 22, color }}>🛒</Text>,
+            tabBarBadge: cartCount > 0 ? cartCount : undefined,
+          }}
+        />
+      ) : null}
       <Tab.Screen
         name="Profile"
         component={ProfileScreen}
         options={{ tabBarLabel: 'Профиль', tabBarIcon: ({ color }) => <Text style={{ fontSize: 22, color }}>👤</Text> }}
       />
+      {user?.isAdmin ? (
+        <Tab.Screen
+          name="AdminOrders"
+          component={AdminOrdersScreen}
+          options={{ tabBarLabel: 'Заказы', tabBarIcon: ({ color }) => <Text style={{ fontSize: 22, color }}>📋</Text> }}
+        />
+      ) : null}
     </Tab.Navigator>
   );
 }
@@ -76,24 +106,27 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {isLoggedIn ? (
-          // Авторизован — сразу в главное приложение
-          <>
-            <Stack.Screen name="Main" component={MainTabs} />
-            <Stack.Screen name="Order" component={OrderScreen} />
-            <Stack.Screen name="WaterDetail" component={WaterDetailScreen} />
-          </>
-        ) : (
-          // Не авторизован — экраны входа
-          <>
-            <Stack.Screen name="Welcome" component={WelcomeScreen} />
-            <Stack.Screen name="Register" component={RegisterScreen} />
-            <Stack.Screen name="Login" component={LoginScreen} />
-          </>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+    <AppProvider>
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {isLoggedIn ? (
+            // Авторизован — сразу в главное приложение
+            <>
+              <Stack.Screen name="Main" component={MainTabs} />
+              <Stack.Screen name="Order" component={OrderScreen} />
+              <Stack.Screen name="WaterDetail" component={WaterDetailScreen} />
+              <Stack.Screen name="AdminOrderDetails" component={AdminOrderDetailsScreen} />
+            </>
+          ) : (
+            // Не авторизован — экраны входа
+            <>
+              <Stack.Screen name="Welcome" component={WelcomeScreen} />
+              <Stack.Screen name="Register" component={RegisterScreen} />
+              <Stack.Screen name="Login" component={LoginScreen} />
+            </>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+    </AppProvider>
   );
 }

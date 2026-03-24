@@ -17,9 +17,14 @@ export default function OrderScreen({ route, navigation }) {
 
   const [form, setForm] = useState({ address: '', phone: '', comment: '' });
   const [quantity, setQuantity] = useState(1);
+  const [exchangeQty, setExchangeQty] = useState('');
+  const [deliveryDay, setDeliveryDay] = useState('Сегодня');
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const exchangeCount = Number(exchangeQty || 0);
+  const discountTotal = exchangeCount * 200;
+  const finalTotal = Math.max(0, product.price * quantity - discountTotal);
 
   useEffect(() => {
     const loadSaved = async () => {
@@ -86,6 +91,10 @@ export default function OrderScreen({ route, navigation }) {
   const changeQuantity = (delta) => {
     const next = Math.max(1, quantity + delta);
     setQuantity(next);
+    if (exchangeQty !== '' && Number(exchangeQty) > next) {
+      setExchangeQty(String(next));
+      if (errors.exchangeQty) setErrors((prev) => ({ ...prev, exchangeQty: null }));
+    }
     saveToStorage(form, next, selectedSlot);
   };
 
@@ -102,6 +111,10 @@ export default function OrderScreen({ route, navigation }) {
     if (!form.phone.trim()) newErrors.phone = 'Введите телефон';
     else if (!/^\+7\d{10}$/.test(form.phone)) newErrors.phone = 'Формат: +79991234567 или 89991234567';
     if (!selectedSlot) newErrors.slot = 'Выберите время доставки';
+    if (!deliveryDay) newErrors.deliveryDay = 'Выберите день доставки';
+    if (exchangeQty === '') newErrors.exchangeQty = 'Укажите бутыли на обмен';
+    else if (!/^\d+$/.test(exchangeQty)) newErrors.exchangeQty = 'Только целое число';
+    else if (Number(exchangeQty) > quantity) newErrors.exchangeQty = 'Не может быть больше количества';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -125,9 +138,12 @@ export default function OrderScreen({ route, navigation }) {
         brand:     product.brand,
         volume:    product.volume,
         price:     product.price,
+        unit_price: product.price,
         address:   form.address.trim(),
         phone:     form.phone,
         quantity,
+        exchange_qty: Number(exchangeQty),
+        delivery_day: deliveryDay,
         time_slot: selectedSlot,
         comment:   form.comment.trim(),
       }]);
@@ -141,7 +157,7 @@ export default function OrderScreen({ route, navigation }) {
 
       Alert.alert(
         '🎉 Заказ оформлен!',
-        `${product.brand} ${product.volume} × ${quantity}\nДоставка: ${selectedSlot}\nСумма: ${product.price * quantity} ₽`,
+        `${product.brand} ${product.volume} × ${quantity}\nОбмен: ${exchangeCount}\nСкидка: ${discountTotal} ₽\nДень: ${deliveryDay}\nДоставка: ${selectedSlot}\nСумма: ${finalTotal} ₽`,
         [{ text: 'Отлично!', onPress: () => navigation.navigate('Main', { screen: 'Profile' }) }]
       );
     } catch (e) {
@@ -182,8 +198,32 @@ export default function OrderScreen({ route, navigation }) {
             <TouchableOpacity style={styles.qtyButton} onPress={() => changeQuantity(1)}>
               <Text style={styles.qtyButtonText}>+</Text>
             </TouchableOpacity>
-            <Text style={styles.totalPrice}>= {product.price * quantity} ₽</Text>
+            <Text style={styles.totalPrice}>= {finalTotal} ₽</Text>
           </View>
+
+          <Text style={styles.sectionLabel}>Бутыли на обмен</Text>
+          <TextInput
+            style={[styles.input, errors.exchangeQty && styles.inputError]}
+            placeholder="0"
+            placeholderTextColor={COLORS.textLight}
+            value={exchangeQty}
+            onChangeText={(v) => {
+              if (v === '') {
+                setExchangeQty('');
+                if (errors.exchangeQty) setErrors((prev) => ({ ...prev, exchangeQty: null }));
+                return;
+              }
+              if (!/^\d+$/.test(v)) return;
+              if (Number(v) > quantity) return;
+              setExchangeQty(v);
+              if (errors.exchangeQty) setErrors((prev) => ({ ...prev, exchangeQty: null }));
+            }}
+            keyboardType="number-pad"
+          />
+          {errors.exchangeQty && <Text style={styles.errorText}>⚠ {errors.exchangeQty}</Text>}
+          <Text style={styles.discountHint}>
+            Скидка: {discountTotal} ₽ (200 ₽ × {exchangeCount})
+          </Text>
 
           <Text style={styles.sectionLabel}>
             Адрес доставки{' '}
@@ -218,6 +258,24 @@ export default function OrderScreen({ route, navigation }) {
             importantForAutofill="no"
           />
           {errors.phone && <Text style={styles.errorText}>⚠ {errors.phone}</Text>}
+
+          <Text style={styles.sectionLabel}>Время доставки</Text>
+          <Text style={styles.sectionLabel}>День доставки</Text>
+          <View style={styles.dayRow}>
+            {['Сегодня', 'Завтра'].map((day) => (
+              <TouchableOpacity
+                key={day}
+                style={[styles.dayButton, deliveryDay === day && styles.dayButtonActive]}
+                onPress={() => {
+                  setDeliveryDay(day);
+                  if (errors.deliveryDay) setErrors((prev) => ({ ...prev, deliveryDay: null }));
+                }}
+              >
+                <Text style={[styles.dayButtonText, deliveryDay === day && styles.dayButtonTextActive]}>{day}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {errors.deliveryDay && <Text style={styles.errorText}>⚠ {errors.deliveryDay}</Text>}
 
           <Text style={styles.sectionLabel}>Время доставки</Text>
           <View style={styles.slotsGrid}>
@@ -263,7 +321,7 @@ export default function OrderScreen({ route, navigation }) {
             {loading
               ? <ActivityIndicator color={COLORS.white} />
               : <Text style={styles.orderButtonText}>
-                  Оформить заказ — {product.price * quantity} ₽
+                  Оформить заказ — {finalTotal} ₽
                 </Text>
             }
           </TouchableOpacity>
@@ -323,6 +381,7 @@ const styles = StyleSheet.create({
   inputError: { borderColor: '#FF3B30' },
   textArea: { height: 80, textAlignVertical: 'top' },
   errorText: { fontSize: FONTS.caption, color: '#FF3B30', marginBottom: SPACING.sm },
+  discountHint: { fontSize: FONTS.caption, color: COLORS.textLight, marginBottom: SPACING.xs },
   slotsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: 4 },
   slot: {
     paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
@@ -332,6 +391,19 @@ const styles = StyleSheet.create({
   slotActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary },
   slotText: { fontSize: FONTS.caption, color: COLORS.text, fontWeight: '600' },
   slotTextActive: { color: COLORS.white },
+  dayRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: 4 },
+  dayButton: {
+    flex: 1,
+    paddingVertical: SPACING.sm,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#E5E5EA',
+    backgroundColor: COLORS.white,
+    alignItems: 'center',
+  },
+  dayButtonActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary },
+  dayButtonText: { fontSize: FONTS.body - 1, color: COLORS.text, fontWeight: '600' },
+  dayButtonTextActive: { color: COLORS.white },
   orderButton: {
     backgroundColor: COLORS.primary, paddingVertical: SPACING.md,
     borderRadius: 14, alignItems: 'center', marginTop: SPACING.lg,

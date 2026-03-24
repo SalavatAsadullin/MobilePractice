@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert,
   ActivityIndicator, RefreshControl,
@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING } from '../constants/theme';
 import { supabase } from '../services/supabase';
+import { useAppContext } from '../context/AppContext';
 
 // Статус заказа → цвет
 const STATUS_COLORS = {
@@ -16,10 +17,14 @@ const STATUS_COLORS = {
 };
 
 export default function ProfileScreen({ navigation }) {
-  const [profile, setProfile] = useState(null);
+  // Берём данные пользователя из глобального состояния
+  const { user, loadUserProfile, clearUser } = useAppContext();
+
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [cancelingOrderId, setCancelingOrderId] = useState(null);
 
   // Перезагружаем данные каждый раз при фокусе экрана
   // (например, после оформления нового заказа)
@@ -31,24 +36,32 @@ export default function ProfileScreen({ navigation }) {
 
   const loadData = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return; // App.js сам перенаправит на Login если сессия пропала
-
-      // Загружаем профиль (имя, телефон)
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('name, phone')
-        .eq('id', user.id)
-        .single();
-
-      setProfile({ ...profileData, email: user.email });
+      // Обновляем глобальный профиль (данные подтягиваются в AppContext)
+      await loadUserProfile();
 
       // Загружаем заказы этого пользователя
-      const { data: ordersData } = await supabase
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('is_admin')
+        .eq('id', authUser.id)
+        .single();
+
+      const isAdmin = !!profileData?.is_admin;
+
+      let query = supabase
         .from('orders')
         .select('*')
-        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
+
+      // Админ видит все заказы, клиент — только свои
+      if (!isAdmin) {
+        query = query.eq('user_id', authUser.id);
+      }
+
+      const { data: ordersData } = await query;
 
       setOrders(ordersData || []);
     } catch (e) {
@@ -64,6 +77,44 @@ export default function ProfileScreen({ navigation }) {
     loadData();
   };
 
+  const updateOrderStatus = async (orderId, status) => {
+    try {
+      setCancelingOrderId(orderId);
+      const { error } = await supabase
+        .from('orders')
+        .update({ status })
+        .eq('id', orderId);
+      if (error) {
+        Alert.alert('Ошибка', 'Не удалось обновить статус заказа');
+        return;
+      }
+      setOrders((prev) =>
+        prev.map((order) =>
+          order.id === orderId ? { ...order, status } : order
+        )
+      );
+    } catch (_) {
+      Alert.alert('Ошибка', 'Нет соединения с сервером');
+    } finally {
+      setCancelingOrderId(null);
+    }
+  };
+
+  const handleCancelOrder = (orderId) => {
+    Alert.alert(
+      'Отмена заказа',
+      'Вы уверены, что хотите отменить этот заказ?',
+      [
+        { text: 'Нет', style: 'cancel' },
+        {
+          text: 'Да, отменить',
+          style: 'destructive',
+          onPress: () => updateOrderStatus(orderId, 'Отменён'),
+        },
+      ]
+    );
+  };
+
   const handleLogout = () => {
     Alert.alert(
       'Выход',
@@ -75,6 +126,7 @@ export default function ProfileScreen({ navigation }) {
           style: 'destructive',
           onPress: async () => {
             await supabase.auth.signOut();
+            clearUser(); // Очищаем глобальное состояние пользователя
             navigation.replace('Welcome');
           },
         },
@@ -86,9 +138,11 @@ export default function ProfileScreen({ navigation }) {
   const totalOrders    = orders.length;
   const doneOrders     = orders.filter(o => o.status === 'Выполнен').length;
   const cancelledOrders = orders.filter(o => o.status === 'Отменён').length;
+  const activeOrders = orders.filter((o) => !o.status || o.status === 'В процессе');
+  const archivedOrders = orders.filter((o) => o.status === 'Выполнен' || o.status === 'Отменён');
 
   // Первая буква имени для аватара
-  const avatarLetter = profile?.name?.[0]?.toUpperCase() || '?';
+  const avatarLetter = user?.name?.[0]?.toUpperCase() || '?';
 
   // Форматируем дату из ISO строки
   const formatDate = (isoStr) => {
@@ -121,9 +175,9 @@ export default function ProfileScreen({ navigation }) {
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{avatarLetter}</Text>
           </View>
-          <Text style={styles.name}>{profile?.name || '—'}</Text>
-          <Text style={styles.email}>{profile?.email || '—'}</Text>
-          {profile?.phone ? <Text style={styles.phone}>{profile.phone}</Text> : null}
+          <Text style={styles.name}>{user?.name || '—'}</Text>
+          <Text style={styles.email}>{user?.email || '—'}</Text>
+          {user?.phone ? <Text style={styles.phone}>{user.phone}</Text> : null}
         </View>
 
         {/* Статистика */}
@@ -142,38 +196,108 @@ export default function ProfileScreen({ navigation }) {
           </View>
         </View>
 
-        {/* История заказов */}
-        <Text style={styles.sectionTitle}>История заказов</Text>
-
-        {orders.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyText}>У вас пока нет заказов</Text>
-            <Text style={styles.emptySubtext}>Перейдите в каталог и оформите первый!</Text>
-          </View>
-        ) : (
-          orders.map((order) => {
-            const statusColor = STATUS_COLORS[order.status] || COLORS.textLight;
-            return (
-              <View key={order.id} style={styles.orderCard}>
-                <View style={styles.orderHeader}>
-                  <Text style={styles.orderId}>№{order.id}</Text>
-                  <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
-                    <Text style={[styles.statusText, { color: statusColor }]}>
-                      {order.status || 'В процессе'}
+        {!user?.isAdmin ? (
+          <>
+            {/* Активные заказы */}
+            <Text style={styles.sectionTitle}>Активные заказы</Text>
+            {activeOrders.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyText}>Сейчас нет активных заказов</Text>
+                <Text style={styles.emptySubtext}>Оформите новый заказ в каталоге</Text>
+              </View>
+            ) : (
+              activeOrders.map((order) => {
+                const statusColor = STATUS_COLORS[order.status] || COLORS.textLight;
+                const orderTotal = order.total_price ?? order.price * order.quantity;
+                return (
+                  <View key={order.id} style={styles.orderCard}>
+                    <View style={styles.orderHeader}>
+                      <Text style={styles.orderId}>№{order.id}</Text>
+                      <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
+                        <Text style={[styles.statusText, { color: statusColor }]}>
+                          {order.status || 'В процессе'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.orderProduct}>
+                      {order.brand} {order.volume} × {order.quantity}
                     </Text>
+                    <Text style={styles.orderMeta}>
+                      Обычные: {order.regular_qty ?? order.quantity} | Обмен: {order.exchange_qty ?? 0}
+                    </Text>
+                    <Text style={styles.orderMeta}>День: {order.delivery_day || 'Сегодня'}</Text>
+                    <Text style={styles.orderMeta}>Скидка: {order.discount_total ?? 0} ₽</Text>
+                    <Text style={styles.orderAddress}>📍 {order.address}</Text>
+                    <View style={styles.orderFooter}>
+                      <Text style={styles.orderDate}>{formatDate(order.created_at)}</Text>
+                      <Text style={styles.orderPrice}>{orderTotal} ₽</Text>
+                    </View>
+                    <View style={styles.orderActionsRow}>
+                      <TouchableOpacity
+                        style={[styles.cancelButton, cancelingOrderId === order.id && styles.cancelButtonDisabled]}
+                        onPress={() => handleCancelOrder(order.id)}
+                        disabled={cancelingOrderId === order.id}
+                      >
+                        {cancelingOrderId === order.id ? (
+                          <ActivityIndicator size="small" color="#FF3B30" />
+                        ) : (
+                          <Text style={styles.cancelButtonText}>Отменить заказ</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </>
+        ) : null}
+
+        {/* Архив заказов */}
+        <TouchableOpacity
+          style={styles.historyToggle}
+          onPress={() => setHistoryExpanded((prev) => !prev)}
+        >
+          <Text style={styles.historyToggleTitle}>История заказов</Text>
+          <Text style={styles.historyToggleArrow}>{historyExpanded ? '▲' : '▼'}</Text>
+        </TouchableOpacity>
+
+        {historyExpanded && (
+          archivedOrders.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyText}>История пока пуста</Text>
+              <Text style={styles.emptySubtext}>Здесь будут выполненные и отменённые заказы</Text>
+            </View>
+          ) : (
+            archivedOrders.map((order) => {
+              const statusColor = STATUS_COLORS[order.status] || COLORS.textLight;
+              const orderTotal = order.total_price ?? order.price * order.quantity;
+              return (
+                <View key={order.id} style={styles.orderCard}>
+                  <View style={styles.orderHeader}>
+                    <Text style={styles.orderId}>№{order.id}</Text>
+                    <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
+                      <Text style={[styles.statusText, { color: statusColor }]}>
+                        {order.status || 'В процессе'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.orderProduct}>
+                    {order.brand} {order.volume} × {order.quantity}
+                  </Text>
+                  <Text style={styles.orderMeta}>
+                    Обычные: {order.regular_qty ?? order.quantity} | Обмен: {order.exchange_qty ?? 0}
+                  </Text>
+                  <Text style={styles.orderMeta}>День: {order.delivery_day || 'Сегодня'}</Text>
+                  <Text style={styles.orderMeta}>Скидка: {order.discount_total ?? 0} ₽</Text>
+                  <Text style={styles.orderAddress}>📍 {order.address}</Text>
+                  <View style={styles.orderFooter}>
+                    <Text style={styles.orderDate}>{formatDate(order.created_at)}</Text>
+                    <Text style={styles.orderPrice}>{orderTotal} ₽</Text>
                   </View>
                 </View>
-                <Text style={styles.orderProduct}>
-                  {order.brand} {order.volume} × {order.quantity}
-                </Text>
-                <Text style={styles.orderAddress}>📍 {order.address}</Text>
-                <View style={styles.orderFooter}>
-                  <Text style={styles.orderDate}>{formatDate(order.created_at)}</Text>
-                  <Text style={styles.orderPrice}>{order.price * order.quantity} ₽</Text>
-                </View>
-              </View>
-            );
-          })
+              );
+            })
+          )
         )}
 
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -230,10 +354,52 @@ const styles = StyleSheet.create({
   statusBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
   statusText: { fontSize: FONTS.caption, fontWeight: '600' },
   orderProduct: { fontSize: FONTS.body - 1, color: COLORS.text, marginBottom: 2 },
+  orderMeta: { fontSize: FONTS.caption, color: COLORS.textLight, marginBottom: 2 },
   orderAddress: { fontSize: FONTS.caption, color: COLORS.textLight, marginBottom: 4 },
   orderFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
   orderDate: { fontSize: FONTS.caption, color: COLORS.textLight },
   orderPrice: { fontSize: FONTS.caption, fontWeight: '700', color: COLORS.primary },
+  cancelButton: {
+    marginTop: SPACING.sm,
+    borderWidth: 1.5,
+    borderColor: '#FF3B30',
+    borderRadius: 10,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 6,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  cancelButtonDisabled: { opacity: 0.6 },
+  cancelButtonText: { color: '#FF3B30', fontSize: FONTS.caption, fontWeight: '700' },
+  orderActionsRow: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm, alignSelf: 'flex-start' },
+  doneButton: {
+    borderWidth: 1.5,
+    borderColor: '#4CAF50',
+    borderRadius: 10,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 6,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  doneButtonText: { color: '#4CAF50', fontSize: FONTS.caption, fontWeight: '700' },
+  historyToggle: {
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.sm,
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md - 2,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  historyToggleTitle: { fontSize: FONTS.body - 1, fontWeight: '700', color: COLORS.text },
+  historyToggleArrow: { fontSize: FONTS.body - 1, color: COLORS.textLight, fontWeight: '700' },
   logoutButton: {
     marginTop: SPACING.lg, paddingVertical: SPACING.md,
     borderRadius: 14, borderWidth: 1.5, borderColor: '#FF3B30', alignItems: 'center',
