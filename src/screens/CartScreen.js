@@ -12,6 +12,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import * as Location from 'expo-location';
 import { COLORS, FONTS, SPACING } from '../constants/theme';
 import { useAppContext } from '../context/AppContext';
 import { supabase } from '../services/supabase';
@@ -20,12 +21,21 @@ const TIME_SLOTS = ['09:00-11:00', '11:00-13:00', '13:00-15:00', '15:00-17:00', 
 
 export default function CartScreen({ navigation }) {
   const { cart, cartTotal, updateCartQuantity, removeFromCart, clearCart, user } = useAppContext();
-  const [form, setForm] = useState({ address: '', phone: '', comment: '' });
+  const [form, setForm] = useState({
+    street: '',
+    house: '',
+    entrance: '',
+    floor: '',
+    apartment: '',
+    phone: '',
+    comment: '',
+  });
   const [exchangeQty, setExchangeQty] = useState('');
   const [deliveryDay, setDeliveryDay] = useState('Сегодня');
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
+  const [locating, setLocating] = useState(false);
 
   useEffect(() => {
     if (user?.phone) {
@@ -61,8 +71,9 @@ export default function CartScreen({ navigation }) {
 
   const validate = () => {
     const nextErrors = {};
-    if (!form.address.trim()) nextErrors.address = 'Введите адрес доставки';
-    else if (form.address.trim().length < 5) nextErrors.address = 'Адрес слишком короткий';
+    if (!form.street.trim()) nextErrors.street = 'Введите улицу';
+    else if (form.street.trim().length < 3) nextErrors.street = 'Улица слишком короткая';
+    if (!form.house.trim()) nextErrors.house = 'Введите номер дома';
     if (!form.phone.trim()) nextErrors.phone = 'Введите телефон';
     else if (!/^\+7\d{10}$/.test(form.phone)) nextErrors.phone = 'Формат: +79991234567 или 89991234567';
     if (!selectedSlot) nextErrors.slot = 'Выберите время доставки';
@@ -72,6 +83,53 @@ export default function CartScreen({ navigation }) {
     else if (Number(exchangeQty) > totalItems) nextErrors.exchangeQty = 'Не может быть больше количества';
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
+  };
+
+  const handleDetectLocation = async () => {
+    try {
+      setLocating(true);
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Нет доступа', 'Разрешите доступ к геолокации в настройках устройства');
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const { latitude, longitude } = position.coords;
+      let street = '';
+      let house = '';
+
+      try {
+        const reverse = await Location.reverseGeocodeAsync({ latitude, longitude });
+        if (reverse?.length) {
+          const geo = reverse[0];
+          const rawStreet = (geo.street || geo.name || '').trim();
+          // Убираем тип улицы, чтобы оставалось только название (например, "Заикина")
+          street = rawStreet.replace(
+            /^(улица|ул\.?|проспект|пр-т|просп\.?|переулок|пер\.?|бульвар|бул\.?|шоссе|наб\.?|набережная|площадь|пл\.?)\s+/i,
+            ''
+          );
+          house = (geo.streetNumber || '').trim();
+        }
+      } catch (_) {
+        // Если обратное геокодирование не сработало, оставляем поля для ручного ввода.
+      }
+
+      if (!street) {
+        street = `Координаты ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+      }
+
+      updateField('street', street.slice(0, 80));
+      updateField('house', house.slice(0, 15));
+      setErrors((prev) => ({ ...prev, street: null, house: null }));
+    } catch (_) {
+      Alert.alert('Ошибка', 'Не удалось определить местоположение');
+    } finally {
+      setLocating(false);
+    }
   };
 
   const handleCheckout = async () => {
@@ -89,6 +147,15 @@ export default function CartScreen({ navigation }) {
 
       // Разбиваем обмен между позициями корзины последовательно
       let remainingExchange = exchangeCount;
+      const composedAddress = [
+        form.street.trim(),
+        form.house.trim(),
+        form.entrance.trim() ? `подъезд ${form.entrance.trim()}` : '',
+        form.floor.trim() ? `этаж ${form.floor.trim()}` : '',
+        form.apartment.trim() ? `кв. ${form.apartment.trim()}` : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
       const rows = cart.map((item) => {
         const localExchange = Math.min(item.quantity, remainingExchange);
         remainingExchange -= localExchange;
@@ -98,7 +165,7 @@ export default function CartScreen({ navigation }) {
           volume: item.product.volume,
           price: item.product.price,
           unit_price: item.product.price,
-          address: form.address.trim(),
+          address: composedAddress,
           phone: form.phone,
           quantity: item.quantity,
           exchange_qty: localExchange,
@@ -115,7 +182,15 @@ export default function CartScreen({ navigation }) {
       }
 
       clearCart();
-      setForm((prev) => ({ ...prev, address: '', comment: '' }));
+      setForm((prev) => ({
+        ...prev,
+        street: '',
+        house: '',
+        entrance: '',
+        floor: '',
+        apartment: '',
+        comment: '',
+      }));
       setExchangeQty('');
       setSelectedSlot(null);
 
@@ -221,19 +296,87 @@ export default function CartScreen({ navigation }) {
           {errors.exchangeQty && <Text style={styles.errorText}>⚠ {errors.exchangeQty}</Text>}
 
           <Text style={styles.sectionLabel}>
-            Адрес доставки <Text style={styles.charCount}>{form.address.length}/100</Text>
+            Улица <Text style={styles.charCount}>{form.street.length}/80</Text>
           </Text>
+          <TouchableOpacity
+            style={[styles.geoButton, locating && styles.buttonDisabled]}
+            onPress={handleDetectLocation}
+            disabled={locating}
+          >
+            {locating ? (
+              <ActivityIndicator size="small" color={COLORS.primary} />
+            ) : (
+              <Text style={styles.geoButtonText}>Определить местоположение</Text>
+            )}
+          </TouchableOpacity>
           <TextInput
-            style={[styles.input, errors.address && styles.inputError]}
-            placeholder="ул. Ленина, д. 1, кв. 10"
+            style={[styles.input, errors.street && styles.inputError]}
+            placeholder="ул. Ленина"
             placeholderTextColor={COLORS.textLight}
-            value={form.address}
+            value={form.street}
             onChangeText={(v) => {
-              if (v.length > 100) return;
-              updateField('address', v);
+              if (v.length > 80) return;
+              updateField('street', v);
             }}
           />
-          {errors.address && <Text style={styles.errorText}>⚠ {errors.address}</Text>}
+          {errors.street && <Text style={styles.errorText}>⚠ {errors.street}</Text>}
+
+          <Text style={styles.sectionLabel}>
+            Дом <Text style={styles.charCount}>{form.house.length}/15</Text>
+          </Text>
+          <TextInput
+            style={[styles.input, errors.house && styles.inputError]}
+            placeholder="15"
+            placeholderTextColor={COLORS.textLight}
+            value={form.house}
+            onChangeText={(v) => {
+              if (v.length > 15) return;
+              updateField('house', v);
+            }}
+          />
+          {errors.house && <Text style={styles.errorText}>⚠ {errors.house}</Text>}
+
+          <Text style={styles.sectionLabel}>
+            Подъезд (необязательно) <Text style={styles.charCount}>{form.entrance.length}/10</Text>
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="2"
+            placeholderTextColor={COLORS.textLight}
+            value={form.entrance}
+            onChangeText={(v) => {
+              if (v.length > 10) return;
+              updateField('entrance', v);
+            }}
+          />
+
+          <Text style={styles.sectionLabel}>
+            Этаж (необязательно) <Text style={styles.charCount}>{form.floor.length}/10</Text>
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="5"
+            placeholderTextColor={COLORS.textLight}
+            value={form.floor}
+            onChangeText={(v) => {
+              if (v.length > 10) return;
+              updateField('floor', v);
+            }}
+          />
+
+          <Text style={styles.sectionLabel}>
+            Квартира (необязательно) <Text style={styles.charCount}>{form.apartment.length}/10</Text>
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="12"
+            placeholderTextColor={COLORS.textLight}
+            value={form.apartment}
+            onChangeText={(v) => {
+              if (v.length > 10) return;
+              updateField('apartment', v);
+            }}
+          />
 
           <Text style={styles.sectionLabel}>
             Телефон <Text style={styles.charCount}>{form.phone.length}/12</Text>
@@ -401,6 +544,17 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   inputError: { borderColor: '#FF3B30' },
+  geoButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    borderRadius: 10,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    backgroundColor: COLORS.white,
+    marginBottom: SPACING.sm,
+  },
+  geoButtonText: { color: COLORS.primary, fontSize: FONTS.caption, fontWeight: '700' },
   textArea: { height: 80, textAlignVertical: 'top' },
   errorText: { fontSize: FONTS.caption, color: '#FF3B30', marginBottom: SPACING.sm },
   slotsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: 4 },

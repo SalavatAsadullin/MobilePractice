@@ -28,7 +28,15 @@ export default function AdminCreateOrderScreen() {
   const [exchangeQty, setExchangeQty] = useState('');
   const [deliveryDay, setDeliveryDay] = useState('Сегодня');
   const [selectedSlot, setSelectedSlot] = useState(null);
-  const [form, setForm] = useState({ address: '', phone: '', comment: '' });
+  const [form, setForm] = useState({
+    street: '',
+    house: '',
+    entrance: '',
+    floor: '',
+    apartment: '',
+    phone: '',
+    comment: '',
+  });
   const [errors, setErrors] = useState({});
 
   useEffect(() => {
@@ -57,8 +65,9 @@ export default function AdminCreateOrderScreen() {
   const validate = () => {
     const next = {};
     if (!selectedProduct) next.product = 'Выберите бутыль';
-    if (!form.address.trim()) next.address = 'Введите адрес';
-    else if (form.address.trim().length < 5) next.address = 'Адрес слишком короткий';
+    if (!form.street.trim()) next.street = 'Введите улицу';
+    else if (form.street.trim().length < 3) next.street = 'Улица слишком короткая';
+    if (!form.house.trim()) next.house = 'Введите номер дома';
     if (!form.phone.trim()) next.phone = 'Введите телефон';
     else if (!/^\+7\d{10}$/.test(form.phone)) next.phone = 'Формат: +79991234567';
     if (!selectedSlot) next.slot = 'Выберите время доставки';
@@ -81,13 +90,23 @@ export default function AdminCreateOrderScreen() {
         return;
       }
 
+      const composedAddress = [
+        form.street.trim(),
+        form.house.trim(),
+        form.entrance.trim() ? `подъезд ${form.entrance.trim()}` : '',
+        form.floor.trim() ? `этаж ${form.floor.trim()}` : '',
+        form.apartment.trim() ? `кв. ${form.apartment.trim()}` : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
+
       const { error } = await supabase.from('orders').insert([{
         user_id: authUser.id,
         brand: selectedProduct.brand,
         volume: selectedProduct.volume,
         price: selectedProduct.price,
         unit_price: selectedProduct.price,
-        address: form.address.trim(),
+        address: composedAddress,
         phone: form.phone,
         quantity,
         exchange_qty: Number(exchangeQty),
@@ -107,7 +126,15 @@ export default function AdminCreateOrderScreen() {
       setQuantity(1);
       setExchangeQty('');
       setSelectedSlot(null);
-      setForm({ address: '', phone: '', comment: '' });
+      setForm({
+        street: '',
+        house: '',
+        entrance: '',
+        floor: '',
+        apartment: '',
+        phone: '',
+        comment: '',
+      });
       setErrors({});
     } catch (_) {
       Alert.alert('Ошибка', 'Нет соединения с сервером');
@@ -220,18 +247,67 @@ export default function AdminCreateOrderScreen() {
             Скидка: {discountTotal} ₽ (200 ₽ × {exchangeCount})
           </Text>
 
-          <Text style={styles.sectionLabel}>Адрес доставки</Text>
+          <Text style={styles.sectionLabel}>Улица</Text>
           <TextInput
-            style={[styles.input, errors.address && styles.inputError]}
-            placeholder="ул. Ленина, д. 1, кв. 10"
+            style={[styles.input, errors.street && styles.inputError]}
+            placeholder="ул. Ленина"
             placeholderTextColor={COLORS.textLight}
-            value={form.address}
+            value={form.street}
             onChangeText={(v) => {
-              if (v.length > 120) return;
-              updateField('address', v);
+              if (v.length > 80) return;
+              updateField('street', v);
             }}
           />
-          {errors.address && <Text style={styles.errorText}>⚠ {errors.address}</Text>}
+          {errors.street && <Text style={styles.errorText}>⚠ {errors.street}</Text>}
+
+          <Text style={styles.sectionLabel}>Дом</Text>
+          <TextInput
+            style={[styles.input, errors.house && styles.inputError]}
+            placeholder="15"
+            placeholderTextColor={COLORS.textLight}
+            value={form.house}
+            onChangeText={(v) => {
+              if (v.length > 15) return;
+              updateField('house', v);
+            }}
+          />
+          {errors.house && <Text style={styles.errorText}>⚠ {errors.house}</Text>}
+
+          <Text style={styles.sectionLabel}>Подъезд (необязательно)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="2"
+            placeholderTextColor={COLORS.textLight}
+            value={form.entrance}
+            onChangeText={(v) => {
+              if (v.length > 10) return;
+              updateField('entrance', v);
+            }}
+          />
+
+          <Text style={styles.sectionLabel}>Этаж (необязательно)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="5"
+            placeholderTextColor={COLORS.textLight}
+            value={form.floor}
+            onChangeText={(v) => {
+              if (v.length > 10) return;
+              updateField('floor', v);
+            }}
+          />
+
+          <Text style={styles.sectionLabel}>Квартира (необязательно)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="12"
+            placeholderTextColor={COLORS.textLight}
+            value={form.apartment}
+            onChangeText={(v) => {
+              if (v.length > 10) return;
+              updateField('apartment', v);
+            }}
+          />
 
           <Text style={styles.sectionLabel}>Телефон</Text>
           <TextInput
